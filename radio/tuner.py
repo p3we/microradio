@@ -86,6 +86,7 @@ class Tuner:
         assert 87000 <= value <= 108000
         channel = (value - 87000) // 100
         self.tune(channel)
+        self.save()
 
     @property
     def stereo(self):
