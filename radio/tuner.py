@@ -1,91 +1,147 @@
 import uasyncio as asyncio
+import ujson as json
 from array import array
 
 
 TUNER_I2C_SEQ = 0x10
 TUNER_I2C_REG = 0x11
+STATE_FILE_NAME = '/state.json'
 STATE_BOOT, STATE_TUNING, STATE_SCANNING, STATE_IDLE = range(4)
+
+
+class Control:
+
+    def __init__(self, reg):
+        self.reg = reg
+
+    @property
+    def mute(self):
+        return (self.reg[0] & 0x40) != 0x40
+
+    @mute.setter
+    def mute(self, value):
+        self.reg[0] = ((self.reg[0] | 0x40) if not value else (self.reg[0] & 0xbf))
+
+    @property
+    def volume(self):
+        return (self.reg[7] & 0x0f)
+
+    @volume.setter
+    def volume(self, value):
+        self.reg[7] = ((self.reg[7] & 0xf0) | (value & 0x0f))
+
+    @property
+    def channel(self):
+        return (self.reg[2] << 2) | ((self.reg[3] & 0xc0) >> 6)
+
+    @channel.setter
+    def channel(self, value):
+        self.reg[2:4] = array('B', [value >> 2, ((value << 6) & 0xc0) | (self.reg[3] & 0x3f)])
 
 
 class Tuner:
 
     def __init__(self):
         self.i2c = None
-        self.cmd = array('B', b'\xc0\x03\x00\x00\x04\x00\x88\x8b\x00\x00\x42\xc6')
+        self.control = array('B', b'\xc0\x03\x00\x00\x04\x00\x88\x8b\x00\x00\x42\xc6')
+        self.reg = memoryview(self.control)
+        self.ctrl = Control(self.reg)
         self.status = array('B', b'\x00\x00')
         self.state = STATE_BOOT
+        try:
+            self.load()
+        except (OSError, ValueError, KeyError):
+            self.save()
 
     @property
     def mute(self):
-        cmd = memoryview(self.cmd)
-        self.i2c.readfrom_mem_into(TUNER_I2C_REG, 0x02, cmd[0:2])
-        return (cmd[0] & 0x40) != 0x40
+        self.i2c.readfrom_mem_into(TUNER_I2C_REG, 0x02, self.reg[0:2])
+        return self.ctrl.mute
 
     @mute.setter
     def mute(self, value):
-        cmd = memoryview(self.cmd)
-        cmd[0] = ((cmd[0] | 0x40) if not value else (cmd[0] & 0xbf))
-        self.i2c.writeto(TUNER_I2C_SEQ, cmd[0:2])
+        self.ctrl.mute = value
+        self.i2c.writeto(TUNER_I2C_SEQ, self.reg[0:2])
+        self.save()
 
     @property
     def volume(self):
-        cmd = memoryview(self.cmd)
-        self.i2c.readfrom_mem_into(TUNER_I2C_REG, 0x05, cmd[6:8])
-        return (cmd[7] & 0x0f)
+        self.i2c.readfrom_mem_into(TUNER_I2C_REG, 0x05, self.reg[6:8])
+        return self.ctrl.volume
 
     @volume.setter
     def volume(self, value):
         assert 0 <= value <= 15
-        cmd = memoryview(self.cmd)
-        cmd[7] = ((cmd[7] & 0xf0) | (value & 0x0f))
-        self.i2c.writeto(TUNER_I2C_SEQ, cmd[0:8])
+        self.ctrl.volume = value
+        self.i2c.writeto(TUNER_I2C_SEQ, self.reg[0:8])
+        self.save()
 
     @property
     def frequency(self):
         status = memoryview(self.status)
         return (((status[0] & 0x3) | status[1]) + 870) * 100
 
+    @frequency.setter
+    def frequency(self, value):
+        assert 87000 <= value <= 108000
+        channel = (value - 87000) // 100
+        self.tune(channel)
+
     @property
     def stereo(self):
         status = memoryview(self.status)
         return (status[1] & 0x04) == 0x04
 
-    def tune(self, value):
-        assert 87000 <= value <= 108000
-        channel = (value - 87000) // 100
-        cmd = memoryview(self.cmd)
+    def tune(self, channel):
         try:
-            cmd[2:4] = array('B', [channel >> 2, ((channel << 6) & 0xc0) | (cmd[3] & 0x3f) | 0x10])
-            self.i2c.writeto(TUNER_I2C_SEQ, cmd[0:8])
+            self.ctrl.channel = channel
+            self.reg[3] |= 0x10  # enable tune
+            self.i2c.writeto(TUNER_I2C_SEQ, self.reg[0:8])
             self.state = STATE_TUNING
         finally:
-            cmd[3] &= ~0x10  # disable tune
+            self.reg[3] &= ~0x10  # disable tune
 
     def scan(self, direction=1):
         assert direction in (0, 1)
-        cmd = memoryview(self.cmd)
         try:
-            cmd[0] = ((cmd[0] & 0xfb) | (0x01 if direction == 0 else 0x03))
-            self.i2c.writeto(TUNER_I2C_SEQ, cmd[0:8])
+            self.reg[0] = ((self.reg[0] & 0xfc) | ((direction << 1) & 0x02))
+            self.reg[0] |= 0x01  # enable seek
+            self.i2c.writeto(TUNER_I2C_SEQ, self.reg[0:8])
             self.state = STATE_SCANNING
         finally:
-            cmd[0] &= ~0x01  # disable seek
+            self.reg[0] &= ~0x01  # disable seek
 
     def boot(self):
         try:
-            self.cmd[1] |= 0x02
-            self.i2c.writeto(TUNER_I2C_SEQ, self.cmd)
+            self.reg[1] |= 0x02
+            self.i2c.writeto(TUNER_I2C_SEQ, self.reg)
             self.state = STATE_IDLE
         finally:
             # reset soft-reset flag after boot
-            self.cmd[1] &= ~0x02
+            self.reg[1] &= ~0x02
+
+    def save(self):
+        with open(STATE_FILE_NAME, 'w') as f:
+            state = {
+                'mute': self.ctrl.mute,
+                'volume': self.ctrl.volume,
+                'channel': self.ctrl.channel,
+            }
+            json.dump(state, f)
+
+    def load(self):
+        with open(STATE_FILE_NAME, 'r') as f:
+            state = json.load(f)
+            self.ctrl.mute = state['mute']
+            self.ctrl.volume = state['volume']
+            self.ctrl.channel = state['channel']
 
     async def run(self, i2c=None):
         self.i2c = i2c or self.i2c
         # send boot configuration to the tuner
         while self.state == STATE_BOOT:
             self.boot()
-            self.tune(105400)
+            self.tune(self.ctrl.channel)
         # track device status
         while self.state != STATE_BOOT:
             self.i2c.readfrom_into(TUNER_I2C_SEQ, self.status)
