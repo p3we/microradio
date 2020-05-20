@@ -40,6 +40,7 @@ class Control:
 
 
 class Tuner:
+    """Single Chip Broadcast FM Radio Tuner - RDA5807M"""
 
     def __init__(self):
         self.i2c = None

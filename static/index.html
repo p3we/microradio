@@ -1,0 +1,92 @@
+<html>
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://igoradamenko.github.io/awsm.css/css/awsm_theme_big-stone.min.css">
+    <script type="text/javascript">
+    let url = '/'
+    //let url = 'http://192.168.1.70/'
+    async function get(what) {
+        return await fetch(url + what, {
+            "method": "GET",
+            "mode": "cors"
+        });
+    }
+    async function set(option, value) {
+        return await fetch(url + option, {
+            "method": "PUT",
+            "mode": "cors",
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({"value": value})
+        });
+    }
+    async function run(option) {
+        return await fetch(url + option, {
+            "method": "POST",
+            "mode": "cors",
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({"value": 1})
+        });
+    }
+    async function status(ev) {
+        let resp = await get("status");
+        let data = await resp.json();
+        return data;
+    }
+    function mute(ev) {
+        set("mute", ev.target.checked)
+    }
+    function volume(ev) {
+        set("volume", ev.target.value)
+    }
+    function tune(ev) {
+        set("tune", ev.target.value)
+    }
+    function scan(ev) {
+        run("scan").then(function(){
+            setTimeout(refresh, 500);
+        })
+    }
+    function refresh() {
+        status().then(function(data){
+            var el = document.getElementById("frequency");
+            el.value = data.frequency;
+            var el = document.getElementById("volume");
+            el.value = data.volume;
+            var el = document.getElementById("mute");
+            el.value = data.mute;
+        });
+    }
+    function init() {
+        document.getElementById("frequency").onchange = tune;
+        document.getElementById("volume").onchange = volume;
+        document.getElementById("mute").onchange = mute;
+        document.getElementById("scan").onclick = scan;
+        refresh();
+    }
+    </script>
+</head>
+<body onload="init()">
+    <div style="max-width: 480px; margin: 0 auto">
+        <h2 style="text-align: center">FM Radio Tuner</h1>
+        <hr>
+        <form onsubmit="return False;">
+            <fieldset>
+                <legend>Tuning</legend>
+                <label for="frequency">Frequency</label>
+                <input id="frequency" name="frequency" type="number" min="87000" max="108000" step="100" value="87000">
+                <input id="scan" name="scan" type="button" value="Scan">
+            </fieldset>
+            <fieldset>
+                <legend>Volume</legend>
+                <label for"volume">Level<label>
+                <input id="volume" name="volume" type="number" min="0" max="15" value="0">
+                <label for="mute"><input id="mute" name="mute" type="checkbox">Mute</label>
+            </fieldset>
+        </form>
+    </div>
+</body>
+</html>

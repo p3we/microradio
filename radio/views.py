@@ -51,3 +51,8 @@ def scan(params):
     except ValueError:
         raise HTTPException(400)
     return ('', 202)
+
+
+@app.route('/')
+async def index(req, resp):
+    await resp.send_file('static/index.html')
