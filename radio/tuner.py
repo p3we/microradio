@@ -5,7 +5,7 @@ from array import array
 
 TUNER_I2C_SEQ = 0x10
 TUNER_I2C_REG = 0x11
-STATE_FILE_NAME = '/state.json'
+STATE_FILE_NAME = 'state.json'
 STATE_BOOT, STATE_TUNING, STATE_SCANNING, STATE_IDLE = range(4)
 
 
