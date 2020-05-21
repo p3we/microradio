@@ -10,6 +10,7 @@ STATE_BOOT, STATE_TUNING, STATE_SCANNING, STATE_IDLE = range(4)
 
 
 class Control:
+    """Simple helper for RDA5807M control instruction."""
 
     def __init__(self, reg):
         self.reg = reg
